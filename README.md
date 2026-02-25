@@ -11,6 +11,38 @@ A base do código está na raiz deste repositório.
 
 ---
 
+## Estrutura do projeto
+
+```
+./
+├── function_app.py             # Entrypoint — Azure Functions
+├── config.py                   # Variáveis de ambiente
+├── config.env                  # Template .env
+├── requirements.txt            # Dependências Python (Functions)
+├── host.json                   # Config Azure Functions
+├── install.sh                  # Script de instalação automatizada (Azure CLI)
+├── bot/                        # Lógica do bot (Teams)
+│   ├── __init__.py
+│   └── teams_bot.py
+├── databricks/                 # Cliente Genie (API + OAuth)
+│   ├── __init__.py
+│   └── genie_client.py
+├── containerapp/               # Entrypoint alternativo — Azure Container Apps
+│   ├── __init__.py
+│   ├── app.py                  # FastAPI server
+│   ├── Dockerfile
+│   └── requirements.txt
+├── teams-app-package/          # Manifesto e ícones do Teams
+│   ├── manifest.json
+│   ├── color.png
+│   └── outline.png
+├── scripts/                    # Scripts auxiliares
+│   └── create_deployment_linux.sh
+└── docs/                       # Credenciais geradas pelo install.sh
+```
+
+---
+
 ## 1) Visão geral (arquitetura)
 
 Fluxo:
@@ -124,7 +156,7 @@ Observação: este projeto usa **um único App Registration** tanto para o Bot F
 
 ### Passo 3 — Publicar o código na Function App
 
-Você precisa publicar o conteúdo de `` (incluindo dependências Python) para rodar em Linux.
+Você precisa publicar o conteúdo deste repositório (incluindo dependências Python) para rodar em Linux.
 
 Opção recomendada (mais simples): **Zip Push Deploy via Kudu**
 
@@ -201,11 +233,15 @@ Endpoints expostos pelo container:
 
 ### Passo B2 — Build e push da imagem (ACR)
 
-Opção típica (exemplo conceitual):
-1. Criar/usar um **Azure Container Registry (ACR)**
-2. Buildar e publicar a imagem (via `az acr build` ou pipeline CI/CD)
+O Dockerfile está em `containerapp/Dockerfile` e o build deve ser executado a partir da **raiz do repositório**:
 
-> A forma exata (CLI/portal/pipeline) varia por cliente; o importante é publicar a imagem em um registry acessível pelo Container App.
+```bash
+# Build local (para teste)
+docker build -f containerapp/Dockerfile -t genie-teams-bot .
+
+# Build + push direto no ACR (recomendado)
+az acr build --registry <NOME-DO-ACR> --image genie-teams-bot:latest -f containerapp/Dockerfile .
+```
 
 ### Passo B3 — Criar o Container App
 

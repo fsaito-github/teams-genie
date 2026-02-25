@@ -1,0 +1,14 @@
+.git
+__pycache__
+*.pyc
+.venv
+.env
+local.settings.json
+*.zip
+docs/
+scripts/
+teams-app-package/
+install.sh
+config.env
+README.md
+.gitignore
