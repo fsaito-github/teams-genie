@@ -340,7 +340,7 @@ class TeamsBot:
 
     @staticmethod
     def _build_response_card(response_text: str, response_data: Optional[Dict], conversation_id: str, message_id: str) -> Dict:
-        """Build an Adaptive Card for a Genie response with optional table and feedback buttons."""
+        """Build an Adaptive Card for a Genie response with optional chart, table and feedback buttons."""
         body: List[Dict] = []
 
         # Header
@@ -362,22 +362,40 @@ class TeamsBot:
         if text:
             body.append({"type": "TextBlock", "text": text, "wrap": True, "spacing": "medium"})
 
-        # Table (if structured data available)
+        # Table and chart (if structured data available)
         table_data = (response_data or {}).get("table")
         if table_data and table_data.get("columns") and table_data.get("rows"):
             columns = table_data["columns"]
             rows = table_data["rows"]
             truncated = table_data.get("truncated", 0)
 
-            # Build header + separator + data rows as monospace text block
-            col_widths = [len(str(c)) for c in columns]
+            # Generate chart if data is suitable
+            try:
+                from charts.chart_generator import should_chart, generate_chart
+                chart_type = should_chart(columns, rows)
+                if chart_type:
+                    chart_uri = generate_chart(columns, rows, chart_type)
+                    if chart_uri:
+                        body.append({
+                            "type": "Image",
+                            "url": chart_uri,
+                            "size": "stretch",
+                            "spacing": "medium"
+                        })
+            except Exception as chart_err:
+                logger.warning(f"Chart generation skipped: {chart_err}")
+
+            # Columns can be dicts {"name", "type_name"} or plain strings
+            col_names = [c["name"] if isinstance(c, dict) else str(c) for c in columns]
+
+            col_widths = [len(n) for n in col_names]
             for row in rows:
                 for i, val in enumerate(row):
                     if i < len(col_widths):
                         col_widths[i] = max(col_widths[i], len(str(val)) if val is not None else 4)
 
             lines = []
-            lines.append(" | ".join(str(c).ljust(col_widths[i]) for i, c in enumerate(columns)))
+            lines.append(" | ".join(col_names[i].ljust(col_widths[i]) for i in range(len(col_names))))
             lines.append("-+-".join("-" * w for w in col_widths))
             for row in rows:
                 cells = []

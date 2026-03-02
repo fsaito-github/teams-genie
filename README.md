@@ -91,6 +91,10 @@ Abaixo estão os arquivos deste repositório e para que cada um serve:
 │   ├── __init__.py
 │   └── genie_client.py                     ← Autenticação e chamadas à API do Genie
 │
+├── charts/                                 ← Geração automática de gráficos
+│   ├── __init__.py
+│   └── chart_generator.py                  ← Analisa tipos de dados e gera PNG via matplotlib
+│
 ├── containerapp/                           ← Código principal (Opção B: Container Apps)
 │   ├── __init__.py
 │   ├── app.py                              ← Servidor web (FastAPI)
@@ -487,10 +491,19 @@ O bot utiliza **Adaptive Cards** (cartões visuais do Microsoft Teams) para exib
 │  mês foi de 1.250.000 m³.                    │
 │                                              │
 │  ┌──────────────────────────────────────┐    │
-│  │ Mês     | Volume (m³) | Variação    │    │
+│  │         📊 Gráfico automático        │    │
+│  │    ▓▓▓▓▓                             │    │
+│  │    ▓▓▓▓▓  ▓▓▓▓                       │    │
+│  │    ▓▓▓▓▓  ▓▓▓▓  ▓▓▓                  │    │
+│  │    Norte   Sul   Leste               │    │
+│  └──────────────────────────────────────┘    │
+│                                              │
+│  ┌──────────────────────────────────────┐    │
+│  │ Região  | Volume (m³) | Variação    │    │
 │  │ --------+-------------+------------ │    │
-│  │ Jan/25  | 1.250.000   | +3,2%       │    │
-│  │ Dez/24  | 1.211.000   | -1,1%       │    │
+│  │ Norte   | 1.250.000   | +3,2%       │    │
+│  │ Sul     | 1.211.000   | -1,1%       │    │
+│  │ Leste   | 980.000     | +0,5%       │    │
 │  └──────────────────────────────────────┘    │
 │                                              │
 │  [👍 Útil]    [👎 Não útil]                   │
@@ -504,8 +517,30 @@ O bot exibe três tipos de cartão:
 | Cartão | Quando aparece | Conteúdo |
 |---|---|---|
 | **Boas-vindas** | Quando o bot é adicionado a um chat ou canal | Saudação + perguntas de exemplo |
-| **Resposta** | Após cada pergunta respondida pelo Genie | Texto explicativo + tabela (se houver) + botões de feedback |
+| **Resposta** | Após cada pergunta respondida pelo Genie | Texto explicativo + **gráfico** (se houver dados numéricos) + tabela + botões de feedback |
 | **Erro** | Quando algo dá errado na comunicação com o Genie | Mensagem de erro + orientação |
+
+### Gráficos automáticos
+
+Quando a resposta do Genie contém **dados tabulares com pelo menos uma coluna numérica**, o bot gera automaticamente um gráfico (imagem PNG) e o exibe dentro do cartão, acima da tabela de dados.
+
+**Como o bot decide:**
+
+A API do Genie retorna o **tipo de cada coluna** (`STRING`, `INT`, `DOUBLE`, `DATE`, etc.). O bot analisa esses tipos:
+
+| Dados retornados pelo Genie | Tipo de gráfico | Exemplo |
+|---|---|---|
+| Coluna de texto (`STRING`) + coluna numérica (`INT`, `DOUBLE`…) | **Barras** | Regiões × Volume |
+| Coluna de data (`DATE`, `TIMESTAMP`) + coluna numérica | **Linhas** | Meses × Consumo |
+| Apenas colunas de texto (sem numéricas) | **Sem gráfico** — só tabela | Lista de nomes |
+| Apenas 1 linha de dados | **Sem gráfico** — só tabela | Resultado único |
+
+> O gráfico é gerado **no servidor** usando a biblioteca `matplotlib` (Python). Não é necessário nenhum software adicional no computador do usuário — a imagem já aparece pronta dentro do Teams.
+
+📂 **Arquivos envolvidos:**
+- `charts/chart_generator.py` — lógica de decisão (`should_chart`) e geração do gráfico (`generate_chart`)
+- `databricks/genie_client.py` — retorna os tipos das colunas (`type_name`) junto com os dados
+- `bot/teams_bot.py` — insere o gráfico como `Image` no Adaptive Card
 
 ### Personalizando as perguntas de exemplo (boas-vindas)
 
@@ -581,6 +616,7 @@ GENIE_EXAMPLE_QUESTIONS=Qual o volume de água tratada em janeiro?|Mostre os top
 | `config.env` | Modelo de arquivo de configuração |
 | `bot/teams_bot.py` | Lógica do bot: recebe mensagens, monta Adaptive Cards e envia respostas |
 | `databricks/genie_client.py` | Conexão com o Databricks Genie: autenticação e chamadas à API |
+| `charts/chart_generator.py` | Geração automática de gráficos (PNG) a partir dos dados tabulares |
 | `teams-app-package/manifest.json` | Definição do bot para o Teams (precisa ser editado) |
 | `teams-app-package/color.png` | Ícone do bot no Teams (192×192 px) |
 | `teams-app-package/outline.png` | Ícone de contorno do bot no Teams (32×32 px) |

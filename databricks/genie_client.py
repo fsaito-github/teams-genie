@@ -462,7 +462,7 @@ class GenieClient:
         return {"text": text, "table": table_data}
     
     def _format_query_result(self, result_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Parse query result into structured data: columns, rows, truncated count."""
+        """Parse query result into structured data: columns (with types), rows, truncated count."""
         try:
             if "statement_response" in result_data:
                 stmt = result_data["statement_response"]
@@ -471,7 +471,10 @@ class GenieClient:
                 if "manifest" in stmt and "schema" in stmt["manifest"]:
                     manifest_schema = stmt["manifest"]["schema"]
                     if "columns" in manifest_schema and manifest_schema["columns"]:
-                        columns = [col.get("name", f"col{i}") for i, col in enumerate(manifest_schema["columns"])]
+                        columns = [
+                            {"name": col.get("name", f"col{i}"), "type_name": col.get("type_name", "STRING")}
+                            for i, col in enumerate(manifest_schema["columns"])
+                        ]
                 
                 if "result" in stmt and stmt["result"]:
                     result = stmt["result"]
@@ -483,7 +486,7 @@ class GenieClient:
                             return {}
                         
                         if not columns:
-                            columns = [f"Column {i+1}" for i in range(len(rows[0]))]
+                            columns = [{"name": f"Column {i+1}", "type_name": "STRING"} for i in range(len(rows[0]))]
                         
                         display_rows = rows[:10]
                         truncated = max(0, len(rows) - 10)
@@ -513,14 +516,17 @@ class GenieClient:
         if not columns or not rows:
             return ""
         
-        col_widths = [len(str(c)) for c in columns]
+        # columns can be dicts {"name", "type_name"} or plain strings
+        col_names = [c["name"] if isinstance(c, dict) else str(c) for c in columns]
+        
+        col_widths = [len(n) for n in col_names]
         for row in rows:
             for i, val in enumerate(row):
                 if i < len(col_widths):
                     col_widths[i] = max(col_widths[i], len(str(val)) if val is not None else 4)
         
         lines = []
-        lines.append(" | ".join(str(c).ljust(col_widths[i]) for i, c in enumerate(columns)))
+        lines.append(" | ".join(col_names[i].ljust(col_widths[i]) for i in range(len(col_names))))
         lines.append("-+-".join("-" * w for w in col_widths))
         for row in rows:
             cells = []
