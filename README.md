@@ -8,8 +8,12 @@ Este projeto permite que os usuários da sua organização façam **perguntas so
 
 ```
 Usuário:  Qual foi o volume de água tratada no último mês?
-Bot:      [resposta gerada pelo Genie com tabela de resultados]
+Bot:      🔮 Databricks Genie
+          [explicação em texto + tabela de resultados formatada]
+          [👍 Útil] [👎 Não útil]
 ```
+
+> As respostas são exibidas como **Adaptive Cards** — cartões visuais do Teams com cabeçalho, tabela de dados e botões de feedback integrados.
 
 ---
 
@@ -81,7 +85,7 @@ Abaixo estão os arquivos deste repositório e para que cada um serve:
 │
 ├── bot/                                    ← Código do bot do Teams
 │   ├── __init__.py
-│   └── teams_bot.py                        ← Lógica de receber/responder mensagens
+│   └── teams_bot.py                        ← Lógica de receber/responder mensagens (Adaptive Cards)
 │
 ├── databricks/                             ← Código de conexão com o Databricks Genie
 │   ├── __init__.py
@@ -470,7 +474,68 @@ Crie um arquivo ZIP contendo **apenas** estes 3 arquivos (sem subpastas):
 
 ---
 
-## Resolução de problemas
+## Adaptive Cards — como o bot exibe as respostas
+
+O bot utiliza **Adaptive Cards** (cartões visuais do Microsoft Teams) para exibir as respostas do Genie de forma rica e organizada. Cada resposta é um único cartão contendo:
+
+```
+┌──────────────────────────────────────────────┐
+│  🔮 Databricks Genie                         │
+│     AI Data Assistant                        │
+│                                              │
+│  O volume total de água tratada no último    │
+│  mês foi de 1.250.000 m³.                    │
+│                                              │
+│  ┌──────────────────────────────────────┐    │
+│  │ Mês     | Volume (m³) | Variação    │    │
+│  │ --------+-------------+------------ │    │
+│  │ Jan/25  | 1.250.000   | +3,2%       │    │
+│  │ Dez/24  | 1.211.000   | -1,1%       │    │
+│  └──────────────────────────────────────┘    │
+│                                              │
+│  [👍 Útil]    [👎 Não útil]                   │
+└──────────────────────────────────────────────┘
+```
+
+### Tipos de cartão
+
+O bot exibe três tipos de cartão:
+
+| Cartão | Quando aparece | Conteúdo |
+|---|---|---|
+| **Boas-vindas** | Quando o bot é adicionado a um chat ou canal | Saudação + perguntas de exemplo |
+| **Resposta** | Após cada pergunta respondida pelo Genie | Texto explicativo + tabela (se houver) + botões de feedback |
+| **Erro** | Quando algo dá errado na comunicação com o Genie | Mensagem de erro + orientação |
+
+### Personalizando as perguntas de exemplo (boas-vindas)
+
+O cartão de boas-vindas exibe perguntas-exemplo para orientar os usuários sobre o que podem perguntar. **Você pode personalizar essas perguntas** sem alterar o código — basta configurar a variável de ambiente `GENIE_EXAMPLE_QUESTIONS`.
+
+**Como configurar:**
+
+1. Abra as **variáveis de ambiente** do seu serviço (Function App ou Container App).
+2. Adicione ou edite a variável:
+
+   | Nome | Valor de exemplo |
+   |---|---|
+   | `GENIE_EXAMPLE_QUESTIONS` | `Qual o volume de água tratada em janeiro?\|Mostre os top 10 indicadores de perdas\|Compare o consumo Q1 vs Q2` |
+
+3. Cada pergunta é separada por `|` (barra vertical).
+4. Salve e reinicie o serviço.
+
+**Exemplo com 4 perguntas:**
+
+```
+GENIE_EXAMPLE_QUESTIONS=Qual o volume de água tratada em janeiro?|Mostre os top 10 indicadores de perdas|Compare o consumo Q1 vs Q2|Qual a média de consumo por região?
+```
+
+> Se essa variável **não for configurada**, o bot exibirá perguntas genéricas em inglês. Recomendamos sempre configurá-la com perguntas relevantes para os dados do seu Genie Space.
+
+📂 **Arquivos envolvidos:**
+- `config.py` — lê a variável `GENIE_EXAMPLE_QUESTIONS`
+- `bot/teams_bot.py` — método `_build_welcome_card()` que monta o cartão de boas-vindas
+
+---
 
 ### O bot não responde no Teams
 
@@ -514,7 +579,7 @@ Crie um arquivo ZIP contendo **apenas** estes 3 arquivos (sem subpastas):
 | `containerapp/Dockerfile` | Receita para construir a imagem Docker (Opção B) |
 | `config.py` | Lê as variáveis de ambiente (usado por ambas as opções) |
 | `config.env` | Modelo de arquivo de configuração |
-| `bot/teams_bot.py` | Lógica do bot: recebe mensagens do Teams e envia respostas |
+| `bot/teams_bot.py` | Lógica do bot: recebe mensagens, monta Adaptive Cards e envia respostas |
 | `databricks/genie_client.py` | Conexão com o Databricks Genie: autenticação e chamadas à API |
 | `teams-app-package/manifest.json` | Definição do bot para o Teams (precisa ser editado) |
 | `teams-app-package/color.png` | Ícone do bot no Teams (192×192 px) |
