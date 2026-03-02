@@ -5,9 +5,9 @@ Processes messages from Teams and communicates with Genie
 import logging
 import json
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from botbuilder.core import TurnContext, BotFrameworkAdapter, BotFrameworkAdapterSettings, MessageFactory, CardFactory
-from botbuilder.schema import Activity, ActivityTypes, HeroCard, CardAction, ActionTypes
+from botbuilder.schema import Activity, ActivityTypes
 
 logger = logging.getLogger(__name__)
 
@@ -159,10 +159,9 @@ class TeamsBot:
             if turn_context.activity.members_added:
                 for member in turn_context.activity.members_added:
                     if member.id != turn_context.activity.recipient.id:
-                        await turn_context.send_activity(
-                            "Hello! I'm your Databricks Genie assistant. "
-                            "Ask me questions about your data, and I'll help you find insights!"
-                        )
+                        card = self._build_welcome_card()
+                        message = MessageFactory.attachment(CardFactory.adaptive_card(card))
+                        await turn_context.send_activity(message)
         except Exception as e:
             logger.error(f"Error in conversation update: {str(e)}")
     
@@ -280,16 +279,18 @@ class TeamsBot:
                 
             if result.get("status") == "success":
                 response_text = result.get("response", "I received your question but got no response.")
+                response_data = result.get("response_data")
                 genie_conversation_id = result.get("conversation_id")
                 genie_message_id = result.get("message_id")
                 
-                # Send response with interactive feedback buttons
+                # Send Adaptive Card with response and feedback buttons
                 try:
                     await self._send_response_with_feedback(
                         turn_context,
                         response_text,
                         genie_conversation_id,
-                        genie_message_id
+                        genie_message_id,
+                        response_data=response_data
                     )
                     logger.info(f"Sent response to user: {response_text[:100]}...")
                 except Exception as feedback_error:
@@ -304,10 +305,15 @@ class TeamsBot:
                         await turn_context.send_activity(f"Response: {response_text}")
             else:
                 error_message = result.get("error", "Unknown error")
-                await turn_context.send_activity(
-                    f"Sorry, I encountered an error: {error_message}\n\n"
-                    "Please make sure your Databricks Genie Space is properly configured."
-                )
+                try:
+                    card = self._build_error_card(error_message)
+                    message = MessageFactory.attachment(CardFactory.adaptive_card(card))
+                    await turn_context.send_activity(message)
+                except Exception:
+                    await turn_context.send_activity(
+                        f"Sorry, I encountered an error: {error_message}\n\n"
+                        "Please make sure your Databricks Genie Space is properly configured."
+                    )
                 logger.error(f"Error from Genie: {error_message}")
             
         except Exception as e:
@@ -319,43 +325,157 @@ class TeamsBot:
             except:
                 pass
     
-    async def _send_response_with_feedback(self, turn_context: TurnContext, response_text: str, conversation_id: str, message_id: str):
-        """Send response with feedback buttons"""
+    async def _send_response_with_feedback(self, turn_context: TurnContext, response_text: str, conversation_id: str, message_id: str, response_data: Optional[Dict] = None):
+        """Send Genie response as a single Adaptive Card with inline feedback buttons."""
         try:
-            # Send the text response first
-            await turn_context.send_activity(response_text)
-            
-            # Only add feedback buttons if we have valid IDs
-            if not conversation_id or not message_id:
-                return
-            
-            # Create feedback card with thumbs up/down buttons
-            feedback_card = HeroCard(
-                text="Was this response helpful?",
-                buttons=[
-                    CardAction(
-                        type=ActionTypes.message_back,
-                        title="👍 Yes",
-                        value=json.dumps({"action": "feedback", "rating": "positive", "conversation_id": conversation_id, "message_id": message_id}),
-                        text="Thanks for the feedback!",
-                        display_text="👍"
-                    ),
-                    CardAction(
-                        type=ActionTypes.message_back,
-                        title="👎 No",
-                        value=json.dumps({"action": "feedback", "rating": "negative", "conversation_id": conversation_id, "message_id": message_id}),
-                        text="Thanks for the feedback!",
-                        display_text="👎"
-                    )
-                ]
-            )
-            
-            message = MessageFactory.attachment(CardFactory.hero_card(feedback_card))
+            card = self._build_response_card(response_text, response_data, conversation_id, message_id)
+            message = MessageFactory.attachment(CardFactory.adaptive_card(card))
             await turn_context.send_activity(message)
-            
         except Exception as e:
-            logger.error(f"Error sending feedback card: {str(e)}", exc_info=True)
-            # Don't fail the whole response if feedback card fails
+            logger.error(f"Error sending adaptive card: {str(e)}", exc_info=True)
+            # Fallback to plain text
+            await turn_context.send_activity(response_text)
+    
+    # ── Adaptive Card builders ────────────────────────────────────
+
+    @staticmethod
+    def _build_response_card(response_text: str, response_data: Optional[Dict], conversation_id: str, message_id: str) -> Dict:
+        """Build an Adaptive Card for a Genie response with optional table and feedback buttons."""
+        body: List[Dict] = []
+
+        # Header
+        body.append({
+            "type": "ColumnSet",
+            "columns": [
+                {"type": "Column", "width": "auto", "items": [
+                    {"type": "TextBlock", "text": "🔮", "size": "large"}
+                ]},
+                {"type": "Column", "width": "stretch", "items": [
+                    {"type": "TextBlock", "text": "Databricks Genie", "weight": "bolder", "size": "medium"},
+                    {"type": "TextBlock", "text": "AI Data Assistant", "isSubtle": True, "spacing": "none", "size": "small"}
+                ]}
+            ]
+        })
+
+        # Explanation text
+        text = (response_data or {}).get("text", response_text) if response_data else response_text
+        if text:
+            body.append({"type": "TextBlock", "text": text, "wrap": True, "spacing": "medium"})
+
+        # Table (if structured data available)
+        table_data = (response_data or {}).get("table")
+        if table_data and table_data.get("columns") and table_data.get("rows"):
+            columns = table_data["columns"]
+            rows = table_data["rows"]
+            truncated = table_data.get("truncated", 0)
+
+            # Build header + separator + data rows as monospace text block
+            col_widths = [len(str(c)) for c in columns]
+            for row in rows:
+                for i, val in enumerate(row):
+                    if i < len(col_widths):
+                        col_widths[i] = max(col_widths[i], len(str(val)) if val is not None else 4)
+
+            lines = []
+            lines.append(" | ".join(str(c).ljust(col_widths[i]) for i, c in enumerate(columns)))
+            lines.append("-+-".join("-" * w for w in col_widths))
+            for row in rows:
+                cells = []
+                for i, val in enumerate(row):
+                    s = str(val) if val is not None else "NULL"
+                    if i < len(col_widths):
+                        cells.append(s.ljust(col_widths[i]))
+                lines.append(" | ".join(cells))
+
+            body.append({
+                "type": "Container",
+                "style": "emphasis",
+                "spacing": "medium",
+                "items": [{
+                    "type": "TextBlock",
+                    "text": "\n".join(lines),
+                    "fontType": "monospace",
+                    "size": "small",
+                    "wrap": False
+                }]
+            })
+
+            if truncated > 0:
+                body.append({"type": "TextBlock", "text": f"({truncated} more rows…)", "isSubtle": True, "size": "small", "spacing": "small"})
+
+        # Feedback actions
+        actions = []
+        if conversation_id and message_id:
+            for title, rating in [("👍 Helpful", "positive"), ("👎 Not helpful", "negative")]:
+                actions.append({
+                    "type": "Action.Submit",
+                    "title": title,
+                    "data": {
+                        "action": "feedback",
+                        "rating": rating,
+                        "conversation_id": conversation_id,
+                        "message_id": message_id
+                    }
+                })
+
+        card = {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.2",
+            "body": body,
+        }
+        if actions:
+            card["actions"] = actions
+        return card
+
+    @staticmethod
+    def _build_welcome_card() -> Dict:
+        """Build an Adaptive Card for the welcome message."""
+        return {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.2",
+            "body": [
+                {
+                    "type": "ColumnSet",
+                    "columns": [
+                        {"type": "Column", "width": "auto", "items": [
+                            {"type": "TextBlock", "text": "🔮", "size": "large"}
+                        ]},
+                        {"type": "Column", "width": "stretch", "items": [
+                            {"type": "TextBlock", "text": "Databricks Genie", "weight": "bolder", "size": "medium"},
+                            {"type": "TextBlock", "text": "AI Data Assistant", "isSubtle": True, "spacing": "none", "size": "small"}
+                        ]}
+                    ]
+                },
+                {"type": "TextBlock", "text": "Hello! I can answer questions about your data using natural language.", "wrap": True, "spacing": "medium"},
+                {
+                    "type": "Container",
+                    "style": "emphasis",
+                    "spacing": "medium",
+                    "items": [
+                        {"type": "TextBlock", "text": "Try asking me something like:", "weight": "bolder", "size": "small"},
+                        {"type": "TextBlock", "text": "• What was the total volume last month?", "wrap": True, "spacing": "small"},
+                        {"type": "TextBlock", "text": "• Show me the top 10 indicators", "wrap": True, "spacing": "none"},
+                        {"type": "TextBlock", "text": "• Compare Q1 vs Q2 results", "wrap": True, "spacing": "none"}
+                    ]
+                }
+            ]
+        }
+
+    @staticmethod
+    def _build_error_card(error_message: str) -> Dict:
+        """Build an Adaptive Card for error messages."""
+        return {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.2",
+            "body": [
+                {"type": "TextBlock", "text": "⚠️ Something went wrong", "weight": "bolder", "color": "attention", "size": "medium"},
+                {"type": "TextBlock", "text": error_message, "wrap": True, "spacing": "medium"},
+                {"type": "TextBlock", "text": "Please make sure your Databricks Genie Space is properly configured.", "wrap": True, "isSubtle": True, "spacing": "medium"}
+            ]
+        }
     
     async def _handle_feedback(self, turn_context: TurnContext, feedback_data: Dict[str, Any]):
         """Handle feedback button click"""

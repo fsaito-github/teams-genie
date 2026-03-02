@@ -184,16 +184,21 @@ class GenieClient:
                 }
             
             # Poll for the actual response
-            response_text = await self._poll_for_response(conv_id, msg_id)
+            response_data = await self._poll_for_response(conv_id, msg_id)
+            
+            flat_response = response_data.get("text", "")
+            if response_data.get("table"):
+                flat_response += "\n\n" + self._table_data_to_text(response_data["table"])
             
             result = {
                 "conversation_id": conv_id,
                 "message_id": msg_id,
-                "response": response_text,
+                "response": flat_response or "I received your question but got no response.",
+                "response_data": response_data,
                 "status": "success"
             }
             
-            logger.info(f"Genie response received: {response_text[:200]}...")
+            logger.info(f"Genie response received: {flat_response[:200]}...")
             return result
             
         except aiohttp.ClientResponseError as e:
@@ -278,12 +283,17 @@ class GenieClient:
             msg_id = data.get("message_id", "")
             
             # Poll for the actual response
-            response_text = await self._poll_for_response(conversation_id, msg_id)
+            response_data = await self._poll_for_response(conversation_id, msg_id)
+            
+            flat_response = response_data.get("text", "")
+            if response_data.get("table"):
+                flat_response += "\n\n" + self._table_data_to_text(response_data["table"])
             
             result = {
                 "conversation_id": conversation_id,
                 "message_id": msg_id,
-                "response": response_text,
+                "response": flat_response or "I received your question but got no response.",
+                "response_data": response_data,
                 "status": "success"
             }
             
@@ -333,18 +343,12 @@ class GenieClient:
                 "error": str(e)
             }
     
-    async def _poll_for_response(self, conversation_id: str, message_id: str, max_attempts: int = 30, delay: float = 2.0) -> str:
+    async def _poll_for_response(self, conversation_id: str, message_id: str, max_attempts: int = 30, delay: float = 2.0) -> Dict[str, Any]:
         """
         Poll for Genie's response to a message
         
-        Args:
-            conversation_id: Conversation ID
-            message_id: Message ID to poll for
-            max_attempts: Maximum number of polling attempts
-            delay: Delay between polls in seconds
-            
         Returns:
-            Response text from Genie
+            Dict with 'text' (str) and 'table' (dict with columns/rows or None)
         """
         import asyncio
         
@@ -365,14 +369,13 @@ class GenieClient:
                     status = data.get("status", "")
                     
                     if status in ["COMPLETED", "SUCCESS", "FINISHED"]:
-                        # Fetch attachment query results if any
-                        response_text = await self._extract_response_with_attachments(session, conversation_id, message_id, data)
-                        return response_text
+                        response_data = await self._extract_response_with_attachments(session, conversation_id, message_id, data)
+                        return response_data
                     
                     elif status in ["FAILED", "ERROR"]:
                         error_msg = data.get("error", {}).get("message", "Unknown error")
                         logger.error(f"Genie returned error: {error_msg}")
-                        return f"Sorry, Genie encountered an error: {error_msg}"
+                        return {"text": f"Sorry, Genie encountered an error: {error_msg}", "table": None}
                     
                     elif status in ["EXECUTING", "QUERYING_HISTORY", "RUNNING", "PENDING"]:
                         # Still processing, wait and retry
@@ -396,25 +399,19 @@ class GenieClient:
             
             # Exceeded max attempts
             logger.error(f"Exceeded max polling attempts ({max_attempts})")
-            return "Sorry, Genie is taking too long to respond. Please try again."
+            return {"text": "Sorry, Genie is taking too long to respond. Please try again.", "table": None}
     
-    async def _extract_response_with_attachments(self, session: aiohttp.ClientSession, conversation_id: str, message_id: str, message_data: Dict[str, Any]) -> str:
+    async def _extract_response_with_attachments(self, session: aiohttp.ClientSession, conversation_id: str, message_id: str, message_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Extract response text and fetch attachment query results
+        Extract response text and fetch attachment query results.
         
-        Args:
-            session: aiohttp session
-            conversation_id: Conversation ID
-            message_id: Message ID
-            message_data: Message data from getMessage API
-            
         Returns:
-            Complete response with attachment results
+            Dict with 'text' (str) and 'table' (dict with columns/rows or None)
         """
-        parts = []
-        user_question = message_data.get("content", "")  # Store to filter out later
+        text_parts = []
+        table_data = None
+        user_question = message_data.get("content", "")
         
-        # Fetch query results from attachments (these are the actual responses)
         if "attachments" in message_data and message_data["attachments"]:
             for attachment in message_data["attachments"]:
                 if not isinstance(attachment, dict):
@@ -436,9 +433,8 @@ class GenieClient:
                     elif isinstance(text_obj, str):
                         text_content = text_obj
                 
-                # Add explanation if found and not the user's question
                 if text_content and text_content != user_question and len(text_content) > 10:
-                    parts.append(text_content)
+                    text_parts.append(text_content)
                 
                 # Fetch query result data
                 attachment_id = attachment.get("attachment_id") or attachment.get("id")
@@ -450,88 +446,94 @@ class GenieClient:
                         async with session.get(result_url, headers=result_headers, timeout=aiohttp.ClientTimeout(total=10)) as result_response:
                             if result_response.status == 200:
                                 result_data = await result_response.json()
-                                query_result_text = self._format_query_result(result_data)
-                                if query_result_text:
-                                    parts.append(query_result_text)
+                                parsed = self._format_query_result(result_data)
+                                if parsed:
+                                    table_data = parsed
                                 
                     except Exception as e:
                         logger.error(f"Error fetching query result: {str(e)}")
         
-        if parts:
-            return "\n\n".join(parts)
+        text = "\n\n".join(text_parts) if text_parts else ""
         
-        # Fallback if no parts extracted
-        logger.warning("No content extracted from message")
-        return "Sorry, I couldn't extract Genie's response. Please try again."
+        if not text and not table_data:
+            logger.warning("No content extracted from message")
+            text = "Sorry, I couldn't extract Genie's response. Please try again."
+        
+        return {"text": text, "table": table_data}
     
-    def _format_query_result(self, result_data: Dict[str, Any]) -> str:
-        """Format query result data into readable text"""
+    def _format_query_result(self, result_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse query result into structured data: columns, rows, truncated count."""
         try:
-            # Check for statement_response with data
             if "statement_response" in result_data:
                 stmt = result_data["statement_response"]
                 
-                # Get column names from manifest.schema.columns
                 columns = []
                 if "manifest" in stmt and "schema" in stmt["manifest"]:
                     manifest_schema = stmt["manifest"]["schema"]
                     if "columns" in manifest_schema and manifest_schema["columns"]:
                         columns = [col.get("name", f"col{i}") for i, col in enumerate(manifest_schema["columns"])]
                 
-                # Get data from result.data_array
                 if "result" in stmt and stmt["result"]:
                     result = stmt["result"]
                     
-                    # Format as table if we have data_array
                     if "data_array" in result and result["data_array"]:
                         rows = result["data_array"]
                         
                         if not rows:
-                            return ""
+                            return {}
                         
-                        # Fallback if no columns from manifest
                         if not columns:
                             columns = [f"Column {i+1}" for i in range(len(rows[0]))]
                         
-                        # Calculate column widths for better formatting
-                        col_widths = [len(str(col)) for col in columns]
-                        for row in rows[:10]:
-                            for i, val in enumerate(row):
-                                if i < len(col_widths):
-                                    col_widths[i] = max(col_widths[i], len(str(val)) if val is not None else 4)
+                        display_rows = rows[:10]
+                        truncated = max(0, len(rows) - 10)
                         
-                        # Build formatted table
-                        output_lines = ["\n```"]  # Use code block for monospace formatting
-                        
-                        # Header row
-                        header = " | ".join(str(col).ljust(col_widths[i]) for i, col in enumerate(columns))
-                        output_lines.append(header)
-                        
-                        # Separator line
-                        separator = "-+-".join("-" * width for width in col_widths)
-                        output_lines.append(separator)
-                        
-                        # Data rows
-                        for row in rows[:10]:
-                            formatted_row = []
-                            for i, val in enumerate(row):
-                                str_val = str(val) if val is not None else "NULL"
-                                if i < len(col_widths):
-                                    formatted_row.append(str_val.ljust(col_widths[i]))
-                            output_lines.append(" | ".join(formatted_row))
-                        
-                        output_lines.append("```")
-                        
-                        if len(rows) > 10:
-                            output_lines.append(f"\n({len(rows) - 10} more rows...)")
-                        
-                        return "\n".join(output_lines)
+                        return {
+                            "columns": columns,
+                            "rows": display_rows,
+                            "truncated": truncated
+                        }
             
-            return ""
+            return {}
             
         except Exception as e:
-            logger.error(f"Error formatting query result: {str(e)}", exc_info=True)
+            logger.error(f"Error parsing query result: {str(e)}", exc_info=True)
+            return {}
+    
+    @staticmethod
+    def _table_data_to_text(table_data: Dict[str, Any]) -> str:
+        """Convert structured table data to an ASCII text table (used as fallback)."""
+        if not table_data:
             return ""
+        
+        columns = table_data.get("columns", [])
+        rows = table_data.get("rows", [])
+        truncated = table_data.get("truncated", 0)
+        
+        if not columns or not rows:
+            return ""
+        
+        col_widths = [len(str(c)) for c in columns]
+        for row in rows:
+            for i, val in enumerate(row):
+                if i < len(col_widths):
+                    col_widths[i] = max(col_widths[i], len(str(val)) if val is not None else 4)
+        
+        lines = []
+        lines.append(" | ".join(str(c).ljust(col_widths[i]) for i, c in enumerate(columns)))
+        lines.append("-+-".join("-" * w for w in col_widths))
+        for row in rows:
+            cells = []
+            for i, val in enumerate(row):
+                s = str(val) if val is not None else "NULL"
+                if i < len(col_widths):
+                    cells.append(s.ljust(col_widths[i]))
+            lines.append(" | ".join(cells))
+        
+        text = "\n".join(lines)
+        if truncated > 0:
+            text += f"\n({truncated} more rows...)"
+        return text
     
     def _extract_response_text(self, response: Dict[str, Any]) -> str:
         """
