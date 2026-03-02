@@ -209,6 +209,7 @@ Ao longo dos passos abaixo, você vai gerar e coletar algumas informações. Rec
 | `PYTHON_ENABLE_WORKER_EXTENSIONS` | `1` | Fixo |
 | `FUNCTIONS_WORKER_RUNTIME` | `python` | Fixo |
 | `LOG_LEVEL` | `INFO` | Fixo (opcional) |
+| `GENIE_EXAMPLE_QUESTIONS` | Perguntas-exemplo separadas por `\|` | Opcional — exibidas no card de boas-vindas |
 
 4. Clique em **Save** e confirme.
 

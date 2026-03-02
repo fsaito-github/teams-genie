@@ -430,7 +430,34 @@ class TeamsBot:
 
     @staticmethod
     def _build_welcome_card() -> Dict:
-        """Build an Adaptive Card for the welcome message."""
+        """Build an Adaptive Card for the welcome message.
+        
+        Example questions are read from the GENIE_EXAMPLE_QUESTIONS env var
+        (pipe-separated). Falls back to generic defaults when not set.
+        """
+        from config import Config
+        
+        raw = Config.GENIE_EXAMPLE_QUESTIONS
+        if raw:
+            questions = [q.strip() for q in raw.split("|") if q.strip()]
+        else:
+            questions = [
+                "What was the total volume last month?",
+                "Show me the top 10 indicators",
+                "Compare Q1 vs Q2 results"
+            ]
+
+        example_items: List[Dict] = [
+            {"type": "TextBlock", "text": "Try asking me something like:", "weight": "bolder", "size": "small"}
+        ]
+        for i, q in enumerate(questions):
+            example_items.append({
+                "type": "TextBlock",
+                "text": f"• {q}",
+                "wrap": True,
+                "spacing": "small" if i == 0 else "none"
+            })
+
         return {
             "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
             "type": "AdaptiveCard",
@@ -453,12 +480,7 @@ class TeamsBot:
                     "type": "Container",
                     "style": "emphasis",
                     "spacing": "medium",
-                    "items": [
-                        {"type": "TextBlock", "text": "Try asking me something like:", "weight": "bolder", "size": "small"},
-                        {"type": "TextBlock", "text": "• What was the total volume last month?", "wrap": True, "spacing": "small"},
-                        {"type": "TextBlock", "text": "• Show me the top 10 indicators", "wrap": True, "spacing": "none"},
-                        {"type": "TextBlock", "text": "• Compare Q1 vs Q2 results", "wrap": True, "spacing": "none"}
-                    ]
+                    "items": example_items
                 }
             ]
         }

@@ -23,6 +23,7 @@ class Config:
     
     # Application Settings
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    GENIE_EXAMPLE_QUESTIONS: str = os.getenv("GENIE_EXAMPLE_QUESTIONS", "")
     
     @classmethod
     def validate(cls) -> bool:
